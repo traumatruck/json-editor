@@ -182,6 +182,14 @@ h3 {
   font-size: 12px;
 }
 
+.helper-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0 0 4px;
+}
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -361,6 +369,7 @@ input[type='file'] {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .search-row input {
@@ -378,14 +387,67 @@ input[type='file'] {
   color: var(--muted);
 }
 
+.tree-guide {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  margin: 10px 0 12px;
+  border-radius: 12px;
+  border: 1px dashed var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.tree-guide p {
+  margin: 4px 0 0;
+  line-height: 1.45;
+}
+
+.legend-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.legend-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: #e9efff;
+  font-size: 13px;
+}
+
+.legend-pill.object {
+  border-color: rgba(125, 211, 252, 0.6);
+  background: rgba(125, 211, 252, 0.08);
+}
+
+.legend-pill.array {
+  border-color: rgba(124, 58, 237, 0.4);
+  background: rgba(124, 58, 237, 0.08);
+}
+
+.legend-pill.value {
+  border-color: rgba(148, 163, 184, 0.5);
+  background: rgba(148, 163, 184, 0.08);
+  color: #d9e6ff;
+}
+
 .tree-container {
-  background: var(--panel-strong);
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(15, 23, 42, 0.88));
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 10px;
+  padding: 12px;
   min-height: 360px;
   max-height: 58vh;
   overflow: auto;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 }
 
 .tree-node {
@@ -395,11 +457,11 @@ input[type='file'] {
 .node-row {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 10px;
-  transition: background 140ms ease, border-color 140ms ease;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
   border: 1px solid transparent;
 }
 
@@ -411,6 +473,7 @@ input[type='file'] {
 .node-row.selected {
   border-color: rgba(125, 211, 252, 0.6);
   background: rgba(125, 211, 252, 0.08);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
 }
 
 .node-row.match {
@@ -423,31 +486,85 @@ input[type='file'] {
 
 .node-main {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 10px;
   flex: 1;
   min-width: 0;
 }
 
-.node-label {
-  font-weight: 600;
+.node-toggle {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: #e9efff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
-.spacer {
-  width: 26px;
+.node-toggle.placeholder {
+  background: transparent;
+  color: var(--muted);
+}
+
+.node-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.node-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.node-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.node-label {
+  font-weight: 700;
+  word-break: break-word;
+}
+
+.node-subtitle {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.node-label-input {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  color: #e9efff;
+  border-radius: 10px;
+  padding: 6px 10px;
+  min-width: 140px;
+  font-weight: 700;
 }
 
 .type-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   border-radius: 999px;
-  padding: 4px 8px;
+  padding: 6px 10px;
   font-size: 12px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   background: rgba(255, 255, 255, 0.05);
   color: #d9e6ff;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  white-space: nowrap;
 }
 
 .type-object {
@@ -465,9 +582,63 @@ input[type='file'] {
   border: 1px solid rgba(148, 163, 184, 0.5);
 }
 
+.node-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.node-meta-chip {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: #e9efff;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.value-pill {
+  border: 1px solid rgba(125, 211, 252, 0.4);
+  background: rgba(125, 211, 252, 0.12);
+  color: #d9e6ff;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-family: 'DM Mono', 'Space Grotesk', monospace;
+  font-size: 13px;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .node-actions {
   display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.node-editor {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 10px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
   gap: 6px;
+}
+
+.mini-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .node-children {
@@ -477,16 +648,7 @@ input[type='file'] {
 }
 
 .object-child {
-  margin-bottom: 6px;
-}
-
-.key-input {
-  border: 1px solid var(--border);
-  background: transparent;
-  color: #e9efff;
-  border-radius: 8px;
-  padding: 4px 6px;
-  margin-left: 32px;
+  margin-bottom: 10px;
 }
 
 .index-chip {
@@ -500,13 +662,24 @@ input[type='file'] {
 }
 
 .add-row {
-  margin: 4px 0 10px 32px;
+  margin: 6px 0 12px 32px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px dashed var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.add-row-hint {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 6px;
 }
 
 .add-row-form {
   display: flex;
   gap: 6px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .add-row input,
@@ -516,6 +689,7 @@ input[type='file'] {
   color: #e9efff;
   border-radius: 8px;
   padding: 6px 8px;
+  min-width: 140px;
 }
 
 .primitive-editor {

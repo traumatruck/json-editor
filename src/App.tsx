@@ -778,13 +778,18 @@ function AddRow({ parentId, parentType, onAdd }: AddRowProps) {
     setKey('')
     setType('string')
   }
+  const helperText =
+    parentType === 'object'
+      ? 'Add a new key/value inside this object.'
+      : 'Add a new item to this array.'
   return (
     <div className="add-row">
+      <div className="add-row-hint">{helperText}</div>
       {open ? (
         <div className="add-row-form">
           {parentType === 'object' ? (
             <input
-              placeholder="key"
+              placeholder="Key name (required)"
               value={key}
               onChange={(e) => setKey(e.target.value)}
               onKeyDown={(e) => {
@@ -834,6 +839,7 @@ type TreeNodeProps = {
   onAdd: (parentId: string, parentType: 'object' | 'array', key: string | undefined, type: NodeType) => void
   onDelete: (parentId: string, childId: string) => void
   parentId?: string
+  parentType?: 'object' | 'array'
 }
 
 function TreeNode({
@@ -851,6 +857,7 @@ function TreeNode({
   onAdd,
   onDelete,
   parentId,
+  parentType,
 }: TreeNodeProps) {
   const node = doc.nodes[nodeId]
   const isExpanded = expanded.has(nodeId)
@@ -858,13 +865,55 @@ function TreeNode({
   const isMatch = searchMatches.includes(nodeId)
   const isActiveMatch = activeMatchId === nodeId
 
+  const isPrimitive =
+    node.type === 'string' || node.type === 'number' || node.type === 'boolean' || node.type === 'null'
+  const humanLabel =
+    {
+      object: 'Object',
+      array: 'Array',
+      string: 'Text',
+      number: 'Number',
+      boolean: 'Boolean',
+      null: 'Null',
+    }[node.type]
+  const childCount =
+    node.type === 'object'
+      ? `${node.entries.length} ${node.entries.length === 1 ? 'property' : 'properties'}`
+      : node.type === 'array'
+        ? `${node.items.length} ${node.items.length === 1 ? 'item' : 'items'}`
+        : ''
+  const rawPreview =
+    node.type === 'string'
+      ? `"${node.value}"`
+      : node.type === 'number'
+        ? String(node.value)
+        : node.type === 'boolean'
+          ? node.value
+            ? 'true'
+            : 'false'
+          : node.type === 'null'
+            ? 'null'
+            : ''
+  const valuePreview = rawPreview.length > 40 ? `${rawPreview.slice(0, 37)}...` : rawPreview
+  const badgeSuffix = childCount || (isPrimitive ? 'Value' : '')
   const typeBadge = (
     <span className={`type-badge type-${node.type}`}>
-      {node.type}
-      {node.type === 'object' ? ` · ${node.entries.length}` : null}
-      {node.type === 'array' ? ` · ${node.items.length}` : null}
+      {humanLabel}
+      {badgeSuffix ? ` · ${badgeSuffix}` : ''}
     </span>
   )
+  const labelControl =
+    parentType === 'object' && parentId ? (
+      <input
+        className="node-label-input"
+        value={label}
+        aria-label="Property name"
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => onRename(parentId, nodeId, e.target.value)}
+      />
+    ) : (
+      <span className="node-label">{label}</span>
+    )
 
   return (
     <div className="tree-node">
@@ -876,19 +925,53 @@ function TreeNode({
       >
         <div className="node-main">
           {node.type === 'object' || node.type === 'array' ? (
-            <button className="ghost" onClick={(e) => (e.stopPropagation(), onToggle(nodeId))}>
+            <button
+              className="node-toggle"
+              aria-label={isExpanded ? 'Collapse group' : 'Expand group'}
+              onClick={(e) => {
+                e.stopPropagation()
+                onToggle(nodeId)
+              }}
+            >
               {isExpanded ? '▾' : '▸'}
             </button>
           ) : (
-            <span className="spacer" />
+            <span className="node-toggle placeholder" aria-hidden="true">
+              •
+            </span>
           )}
-          <span className="node-label">{label}</span>
-          {typeBadge}
-          {node.type === 'string' || node.type === 'number' || node.type === 'boolean' || node.type === 'null' ? (
-            <PrimitiveEditor node={node} onCommit={(value, t) => onEditPrimitive(nodeId, value, t)} />
-          ) : null}
+          <div className="node-body">
+            <div className="node-topline">
+              <div className="node-title">
+                {labelControl}
+                <span className="node-subtitle">
+                  {node.type === 'object' || node.type === 'array' ? 'Container' : 'Editable value'}
+                </span>
+              </div>
+              {typeBadge}
+            </div>
+            <div className="node-meta-row">
+              {childCount ? (
+                <span className="node-meta-chip">{childCount}</span>
+              ) : (
+                <span className="node-meta-chip">Value</span>
+              )}
+              {valuePreview ? <span className="value-pill">{valuePreview}</span> : null}
+              <span className="node-hint">
+                {node.type === 'object' || node.type === 'array'
+                  ? 'Use the caret to open and explore items.'
+                  : 'Change the type or value with the controls here.'}
+              </span>
+            </div>
+          </div>
         </div>
         <div className="node-actions">
+          {isPrimitive ? (
+            <div className="node-editor">
+              <div className="mini-label">Value</div>
+              <PrimitiveEditor node={node} onCommit={(value, t) => onEditPrimitive(nodeId, value, t)} />
+            </div>
+          ) : null}
           {parentId ? (
             <button
               className="ghost danger"
@@ -908,12 +991,6 @@ function TreeNode({
         <div className="node-children">
           {node.entries.map((entry) => (
             <div key={entry.childId} className="object-child">
-              <input
-                className="key-input"
-                value={entry.key}
-                onClick={(e) => e.stopPropagation()}
-                onChange={(e) => onRename(node.id, entry.childId, e.target.value)}
-              />
               <TreeNode
                 doc={doc}
                 nodeId={entry.childId}
@@ -929,6 +1006,7 @@ function TreeNode({
                 onAdd={onAdd}
                 onDelete={onDelete}
                 parentId={node.id}
+                parentType="object"
               />
             </div>
           ))}
@@ -956,6 +1034,7 @@ function TreeNode({
                 onAdd={onAdd}
                 onDelete={onDelete}
                 parentId={node.id}
+                parentType="array"
               />
             </div>
           ))}
@@ -1223,6 +1302,20 @@ function App() {
             <button onClick={() => dispatch({ type: 'MOVE_MATCH', direction: 1 })} disabled={!state.searchMatches.length}>
               Next
             </button>
+          </div>
+        </div>
+        <div className="tree-guide">
+          <div>
+            <div className="helper-label">How to explore</div>
+            <p className="muted small">
+              Expand objects and arrays with the caret, click a row to focus it, and edit values inline. Use the add
+              controls beneath each branch to grow the tree.
+            </p>
+          </div>
+          <div className="legend-row">
+            <span className="legend-pill object">Object · grouped keys</span>
+            <span className="legend-pill array">Array · ordered items</span>
+            <span className="legend-pill value">Value · text / number / boolean / null</span>
           </div>
         </div>
         <div className="tree-container">
