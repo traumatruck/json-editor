@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react'
 import './App.css'
 
 type NodeType = 'object' | 'array' | 'string' | 'number' | 'boolean' | 'null'
@@ -28,6 +35,7 @@ type HistoryEntry = {
   rawText: string
   expanded: string[]
   selectedId?: string
+  preSearchExpanded?: string[]
 }
 
 type EditorState = {
@@ -40,14 +48,17 @@ type EditorState = {
   searchQuery: string
   searchMatches: string[]
   activeMatch: number
+  searchFilterOnly: boolean
   outputMode: 'pretty' | 'minified'
   indent: number
   undoStack: HistoryEntry[]
   redoStack: HistoryEntry[]
   autoParse: boolean
+  autoSaveEnabled: boolean
   snippets: SnippetMeta[]
   snippetContents: Record<string, string>
   notice?: Notice
+  preSearchExpanded?: Set<string>
 }
 
 type Action =
@@ -64,16 +75,20 @@ type Action =
   | { type: 'COLLAPSE_ALL' }
   | { type: 'SET_SEARCH_QUERY'; query: string }
   | { type: 'MOVE_MATCH'; direction: 1 | -1 }
+  | { type: 'TOGGLE_FILTER_MODE'; enabled: boolean }
   | { type: 'SET_OUTPUT_MODE'; mode: 'pretty' | 'minified' }
   | { type: 'SET_INDENT'; indent: number }
   | { type: 'SORT_KEYS'; scope: 'selected' | 'all' }
+  | { type: 'MOVE_ARRAY_ITEM'; parentId: string; childId: string; direction: -1 | 1 }
   | { type: 'UNDO' }
   | { type: 'REDO' }
   | { type: 'SET_AUTOPARSE'; enabled: boolean }
+  | { type: 'SET_AUTOSAVE'; enabled: boolean }
   | { type: 'SAVE_SNIPPET'; name: string }
   | { type: 'LOAD_SNIPPET'; id: string }
   | { type: 'RENAME_SNIPPET'; id: string; name: string }
   | { type: 'DELETE_SNIPPET'; id: string }
+  | { type: 'OVERWRITE_SNIPPET'; id: string }
   | { type: 'CLEAR_LOCAL' }
   | { type: 'SET_NOTICE'; notice?: Notice }
 
@@ -90,12 +105,22 @@ const DEFAULT_JSON = {
 const SAMPLE_TEXT = JSON.stringify(DEFAULT_JSON, null, 2)
 const LAST_DOC_KEY = 'json-editor:last-doc'
 const SNIPPETS_KEY = 'json-editor:snippets'
+const SETTINGS_KEY = 'json-editor:settings'
 
 function createId() {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return crypto.randomUUID()
   }
   return `id-${Math.random().toString(16).slice(2)}`
+}
+
+function loadAutoSaveEnabled() {
+  try {
+    const settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}')
+    return settings?.autoSaveEnabled ?? true
+  } catch {
+    return true
+  }
 }
 
 function parseJson(text: string): { ok: true; value: unknown } | { ok: false; error: ParseError } {
@@ -193,6 +218,7 @@ function snapshotState(state: EditorState): HistoryEntry {
     rawText: state.rawText,
     expanded: Array.from(state.expanded),
     selectedId: state.selectedId,
+    preSearchExpanded: state.preSearchExpanded ? Array.from(state.preSearchExpanded) : undefined,
   }
 }
 
@@ -348,6 +374,22 @@ function deleteNode(state: EditorState, parentId: string, childId: string): Edit
   return finalizeDocumentChange(state, doc, parentId)
 }
 
+function moveArrayItem(state: EditorState, parentId: string, childId: string, direction: -1 | 1): EditorState {
+  if (!state.doc) return state
+  const doc = structuredClone(state.doc)
+  const parent = doc.nodes[parentId]
+  if (!parent || parent.type !== 'array') return state
+  const index = parent.items.indexOf(childId)
+  if (index === -1) return state
+  const target = index + direction
+  if (target < 0 || target >= parent.items.length) return state
+  const items = [...parent.items]
+  const [moved] = items.splice(index, 1)
+  items.splice(target, 0, moved)
+  parent.items = items
+  return finalizeDocumentChange(state, doc, childId)
+}
+
 function renameKey(state: EditorState, parentId: string, childId: string, newKey: string): EditorState {
   if (!state.doc) return state
   const trimmed = newKey.trim()
@@ -412,6 +454,7 @@ function finalizeDocumentChange(state: EditorState, doc: DocumentState, focusId?
       lastValidText: formatted,
       parseError: undefined,
       selectedId: focusId ?? state.selectedId,
+      preSearchExpanded: state.preSearchExpanded,
     },
     doc,
   )
@@ -456,6 +499,7 @@ function applyParse(state: EditorState, text: string): EditorState {
     lastValidText: formatted,
     expanded,
     selectedId: doc.rootId,
+    preSearchExpanded: state.searchQuery.trim() ? new Set([doc.rootId]) : undefined,
   }
   const withSearch = applySearch(base, doc)
   return withHistory(state, withSearch, true)
@@ -467,20 +511,46 @@ function withHistory(state: EditorState, next: EditorState, push: boolean): Edit
   return { ...next, undoStack: undo, redoStack: [] }
 }
 
-function loadStoredState(): EditorState | null {
+function loadStoredState(autoSaveEnabled: boolean): EditorState | null {
   try {
-    const raw = localStorage.getItem(LAST_DOC_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw)
-    const doc: DocumentState | null = parsed.doc ?? null
-    const expandedSet: Set<string> = new Set(parsed.expanded ?? [])
-    const indent = parsed.indent ?? 2
     const snippets: SnippetMeta[] = JSON.parse(localStorage.getItem(SNIPPETS_KEY) ?? '[]')
     const snippetContents: Record<string, string> = {}
     snippets.forEach((item) => {
       const content = localStorage.getItem(`${SNIPPETS_KEY}:${item.id}`)
       if (content) snippetContents[item.id] = content
     })
+    const raw = localStorage.getItem(LAST_DOC_KEY)
+    if (!raw) {
+      if (!snippets.length) return null
+      const doc = buildDocumentFromValue(DEFAULT_JSON)
+      return {
+        rawText: SAMPLE_TEXT,
+        lastValidText: SAMPLE_TEXT,
+        doc,
+        expanded: new Set([doc.rootId]),
+        selectedId: doc.rootId,
+        parseError: undefined,
+        searchQuery: '',
+        searchMatches: [],
+        activeMatch: -1,
+        searchFilterOnly: false,
+        outputMode: 'pretty',
+        indent: 2,
+        undoStack: [],
+        redoStack: [],
+        autoParse: false,
+        autoSaveEnabled,
+        snippets,
+        snippetContents,
+        notice: undefined,
+        preSearchExpanded: undefined,
+      }
+    }
+    const parsed = JSON.parse(raw)
+    const doc: DocumentState | null = parsed.doc ?? null
+    const expandedSet: Set<string> = new Set(parsed.expanded ?? [])
+    const indent = parsed.indent ?? 2
+    const searchFilterOnly = parsed.searchFilterOnly ?? false
     const restored: EditorState = {
       rawText: parsed.rawText ?? SAMPLE_TEXT,
       lastValidText: parsed.lastValidText ?? SAMPLE_TEXT,
@@ -491,14 +561,17 @@ function loadStoredState(): EditorState | null {
       searchQuery: '',
       searchMatches: [],
       activeMatch: -1,
+      searchFilterOnly,
       outputMode: 'pretty',
       indent,
       undoStack: [],
       redoStack: [],
       autoParse: false,
+      autoSaveEnabled,
       snippets,
       snippetContents,
       notice: undefined,
+      preSearchExpanded: undefined,
     }
     return restored
   } catch (error) {
@@ -508,7 +581,8 @@ function loadStoredState(): EditorState | null {
 }
 
 function buildInitialState(): EditorState {
-  const restored = loadStoredState()
+  const autoSaveEnabled = loadAutoSaveEnabled()
+  const restored = loadStoredState(autoSaveEnabled)
   if (restored) {
     return applySearch(restored, restored.doc)
   }
@@ -523,28 +597,37 @@ function buildInitialState(): EditorState {
     searchQuery: '',
     searchMatches: [],
     activeMatch: -1,
+    searchFilterOnly: false,
     outputMode: 'pretty',
     indent: 2,
     undoStack: [],
     redoStack: [],
     autoParse: false,
+    autoSaveEnabled,
     snippets: [],
     snippetContents: {},
     notice: undefined,
+    preSearchExpanded: undefined,
   }
 }
 
 function saveToStorage(state: EditorState) {
   try {
-    const payload = {
-      rawText: state.rawText,
-      lastValidText: state.lastValidText,
-      doc: state.doc,
-      expanded: Array.from(state.expanded),
-      selectedId: state.selectedId,
-      indent: state.indent,
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ autoSaveEnabled: state.autoSaveEnabled }))
+    if (state.autoSaveEnabled) {
+      const payload = {
+        rawText: state.rawText,
+        lastValidText: state.lastValidText,
+        doc: state.doc,
+        expanded: Array.from(state.expanded),
+        selectedId: state.selectedId,
+        indent: state.indent,
+        searchFilterOnly: state.searchFilterOnly,
+      }
+      localStorage.setItem(LAST_DOC_KEY, JSON.stringify(payload))
+    } else {
+      localStorage.removeItem(LAST_DOC_KEY)
     }
-    localStorage.setItem(LAST_DOC_KEY, JSON.stringify(payload))
     localStorage.setItem(SNIPPETS_KEY, JSON.stringify(state.snippets))
     state.snippets.forEach((meta) => {
       const content = state.snippetContents[meta.id]
@@ -594,7 +677,23 @@ function editorReducer(state: EditorState, action: Action): EditorState {
     case 'COLLAPSE_ALL':
       return state.doc ? { ...state, expanded: new Set([state.doc.rootId]) } : state
     case 'SET_SEARCH_QUERY': {
-      const next = { ...state, searchQuery: action.query }
+      const trimmed = action.query
+      const enteringSearch = !state.searchQuery.trim() && !!trimmed.trim()
+      const clearingSearch = !!state.searchQuery.trim() && !trimmed.trim()
+      let expanded = state.expanded
+      let preSearchExpanded = state.preSearchExpanded
+      if (enteringSearch) {
+        preSearchExpanded = new Set(state.expanded)
+      }
+      if (clearingSearch && state.preSearchExpanded) {
+        expanded = new Set(state.preSearchExpanded)
+        preSearchExpanded = undefined
+      }
+      const next = { ...state, searchQuery: trimmed, expanded, preSearchExpanded }
+      return applySearch(next)
+    }
+    case 'TOGGLE_FILTER_MODE': {
+      const next = { ...state, searchFilterOnly: action.enabled }
       return applySearch(next)
     }
     case 'MOVE_MATCH': {
@@ -617,6 +716,8 @@ function editorReducer(state: EditorState, action: Action): EditorState {
     }
     case 'SORT_KEYS':
       return sortKeys(state, action.scope)
+    case 'MOVE_ARRAY_ITEM':
+      return moveArrayItem(state, action.parentId, action.childId, action.direction)
     case 'UNDO': {
       const previous = state.undoStack[0]
       if (!previous) return state
@@ -631,6 +732,7 @@ function editorReducer(state: EditorState, action: Action): EditorState {
         undoStack: remaining,
         redoStack: [redo, ...state.redoStack].slice(0, 50),
         parseError: undefined,
+        preSearchExpanded: previous.preSearchExpanded ? new Set(previous.preSearchExpanded) : undefined,
       }
       return applySearch(restored, restored.doc)
     }
@@ -648,11 +750,14 @@ function editorReducer(state: EditorState, action: Action): EditorState {
         redoStack: remaining,
         undoStack: [undo, ...state.undoStack].slice(0, 50),
         parseError: undefined,
+        preSearchExpanded: nextEntry.preSearchExpanded ? new Set(nextEntry.preSearchExpanded) : undefined,
       }
       return applySearch(restored, restored.doc)
     }
     case 'SET_AUTOPARSE':
       return { ...state, autoParse: action.enabled }
+    case 'SET_AUTOSAVE':
+      return { ...state, autoSaveEnabled: action.enabled }
     case 'SAVE_SNIPPET': {
       if (!state.doc) return { ...state, notice: { type: 'error', message: 'Load or parse JSON first.' } }
       const id = createId()
@@ -680,12 +785,29 @@ function editorReducer(state: EditorState, action: Action): EditorState {
     case 'DELETE_SNIPPET': {
       const snippets = state.snippets.filter((s) => s.id !== action.id)
       const { [action.id]: _, ...rest } = state.snippetContents
+      localStorage.removeItem(`${SNIPPETS_KEY}:${action.id}`)
       return { ...state, snippets, snippetContents: rest }
+    }
+    case 'OVERWRITE_SNIPPET': {
+      if (!state.doc) return { ...state, notice: { type: 'error', message: 'Load or parse JSON first.' } }
+      const exists = state.snippets.find((s) => s.id === action.id)
+      if (!exists) return state
+      const snippetContents = { ...state.snippetContents, [action.id]: state.rawText }
+      const snippets = state.snippets.map((s) =>
+        s.id === action.id ? { ...s, updatedAt: Date.now() } : s,
+      )
+      return {
+        ...state,
+        snippets,
+        snippetContents,
+        notice: { type: 'success', message: 'Snippet updated.' },
+      }
     }
     case 'CLEAR_LOCAL': {
       localStorage.removeItem(LAST_DOC_KEY)
       state.snippets.forEach((item) => localStorage.removeItem(`${SNIPPETS_KEY}:${item.id}`))
       localStorage.removeItem(SNIPPETS_KEY)
+      localStorage.removeItem(SETTINGS_KEY)
       return buildInitialState()
     }
     case 'SET_NOTICE':
@@ -832,14 +954,18 @@ type TreeNodeProps = {
   selectedId?: string
   searchMatches: string[]
   activeMatchId?: string
+  visibleSet?: Set<string>
   onToggle: (id: string) => void
   onSelect: (id: string) => void
   onRename: (parentId: string, childId: string, newKey: string) => void
   onEditPrimitive: (nodeId: string, value: string | number | boolean | null, newType?: NodeType) => void
   onAdd: (parentId: string, parentType: 'object' | 'array', key: string | undefined, type: NodeType) => void
   onDelete: (parentId: string, childId: string) => void
+  onMoveInArray?: (parentId: string, childId: string, direction: -1 | 1) => void
   parentId?: string
   parentType?: 'object' | 'array'
+  indexInParent?: number
+  level?: number
 }
 
 function TreeNode({
@@ -856,14 +982,26 @@ function TreeNode({
   onEditPrimitive,
   onAdd,
   onDelete,
+  onMoveInArray,
   parentId,
   parentType,
+  indexInParent,
+  visibleSet,
+  level = 1,
 }: TreeNodeProps) {
   const node = doc.nodes[nodeId]
+  if (visibleSet && !visibleSet.has(nodeId)) return null
   const isExpanded = expanded.has(nodeId)
   const isSelected = selectedId === nodeId
   const isMatch = searchMatches.includes(nodeId)
   const isActiveMatch = activeMatchId === nodeId
+  const rowRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (isSelected) {
+      rowRef.current?.focus()
+    }
+  }, [isSelected])
 
   const isPrimitive =
     node.type === 'string' || node.type === 'number' || node.type === 'boolean' || node.type === 'null'
@@ -915,13 +1053,56 @@ function TreeNode({
       <span className="node-label">{label}</span>
     )
 
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Enter' && (node.type === 'object' || node.type === 'array')) {
+      event.preventDefault()
+      onToggle(nodeId)
+      return
+    }
+    if (event.key === 'ArrowRight' && (node.type === 'object' || node.type === 'array')) {
+      event.preventDefault()
+      if (!isExpanded) {
+        onToggle(nodeId)
+      } else {
+        const nextId =
+          node.type === 'object' ? node.entries[0]?.childId : node.type === 'array' ? node.items[0] : undefined
+        if (nextId) onSelect(nextId)
+      }
+      return
+    }
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      if (isExpanded && (node.type === 'object' || node.type === 'array')) {
+        onToggle(nodeId)
+      } else if (parentId) {
+        onSelect(parentId)
+      }
+      return
+    }
+    if (event.key === 'Delete' && parentId) {
+      event.preventDefault()
+      onDelete(parentId, nodeId)
+    }
+  }
+
   return (
     <div className="tree-node">
       <div
         className={`node-row ${isSelected ? 'selected' : ''} ${isMatch ? 'match' : ''} ${
           isActiveMatch ? 'active-match' : ''
         }`}
-        onClick={() => onSelect(nodeId)}
+        ref={rowRef}
+        tabIndex={isSelected ? 0 : -1}
+        role="treeitem"
+        aria-selected={isSelected}
+        aria-expanded={node.type === 'object' || node.type === 'array' ? isExpanded : undefined}
+        aria-posinset={indexInParent !== undefined ? indexInParent + 1 : undefined}
+        aria-level={level}
+        onClick={() => {
+          onSelect(nodeId)
+          rowRef.current?.focus()
+        }}
+        onKeyDown={handleKeyDown}
       >
         <div className="node-main">
           {node.type === 'object' || node.type === 'array' ? (
@@ -989,55 +1170,92 @@ function TreeNode({
 
       {node.type === 'object' && isExpanded ? (
         <div className="node-children">
-          {node.entries.map((entry) => (
-            <div key={entry.childId} className="object-child">
-              <TreeNode
-                doc={doc}
-                nodeId={entry.childId}
-                label={entry.key}
-                expanded={expanded}
-                selectedId={selectedId}
-                searchMatches={searchMatches}
-                activeMatchId={activeMatchId}
-                onToggle={onToggle}
-                onSelect={onSelect}
-                onRename={onRename}
-                onEditPrimitive={onEditPrimitive}
-                onAdd={onAdd}
-                onDelete={onDelete}
-                parentId={node.id}
-                parentType="object"
-              />
-            </div>
-          ))}
+          {(visibleSet ? node.entries.filter((entry) => visibleSet.has(entry.childId)) : node.entries).map(
+            (entry) => (
+              <div key={entry.childId} className="object-child">
+                <TreeNode
+                  doc={doc}
+                  nodeId={entry.childId}
+                  label={entry.key}
+                  expanded={expanded}
+                  selectedId={selectedId}
+                  searchMatches={searchMatches}
+                  activeMatchId={activeMatchId}
+                  visibleSet={visibleSet}
+                  onToggle={onToggle}
+                  onSelect={onSelect}
+                  onRename={onRename}
+                  onEditPrimitive={onEditPrimitive}
+                  onAdd={onAdd}
+                  onDelete={onDelete}
+                  onMoveInArray={onMoveInArray}
+                  parentId={node.id}
+                  parentType="object"
+                  level={level + 1}
+                />
+              </div>
+            ),
+          )}
           <AddRow parentId={node.id} parentType="object" onAdd={(key, type) => onAdd(node.id, 'object', key, type)} />
         </div>
       ) : null}
 
       {node.type === 'array' && isExpanded ? (
         <div className="node-children">
-          {node.items.map((childId, index) => (
-            <div key={childId} className="object-child">
-              <span className="index-chip">[{index}]</span>
-              <TreeNode
-                doc={doc}
-                nodeId={childId}
-                label={`[${index}]`}
-                expanded={expanded}
-                selectedId={selectedId}
-                searchMatches={searchMatches}
-                activeMatchId={activeMatchId}
-                onToggle={onToggle}
-                onSelect={onSelect}
-                onRename={onRename}
-                onEditPrimitive={onEditPrimitive}
-                onAdd={onAdd}
-                onDelete={onDelete}
-                parentId={node.id}
-                parentType="array"
-              />
-            </div>
-          ))}
+          {node.items.map((childId, index) =>
+            visibleSet && !visibleSet.has(childId) ? null : (
+              <div key={childId} className="object-child array-child">
+                <div className="array-controls">
+                  <span className="index-chip">[{index}]</span>
+                  <div className="reorder-buttons">
+                    <button
+                      className="ghost icon-only"
+                      title="Move up"
+                      disabled={index === 0}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onMoveInArray?.(node.id, childId, -1)
+                      }}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      className="ghost icon-only"
+                      title="Move down"
+                      disabled={index === node.items.length - 1}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onMoveInArray?.(node.id, childId, 1)
+                      }}
+                    >
+                      ↓
+                    </button>
+                  </div>
+                </div>
+                <TreeNode
+                  doc={doc}
+                  nodeId={childId}
+                  label={`[${index}]`}
+                  expanded={expanded}
+                  selectedId={selectedId}
+                  searchMatches={searchMatches}
+                  activeMatchId={activeMatchId}
+                  visibleSet={visibleSet}
+                  onToggle={onToggle}
+                  onSelect={onSelect}
+                  onRename={onRename}
+                  onEditPrimitive={onEditPrimitive}
+                  onAdd={onAdd}
+                  onDelete={onDelete}
+                  onMoveInArray={onMoveInArray}
+                  parentId={node.id}
+                  parentType="array"
+                  indexInParent={index}
+                  level={level + 1}
+                />
+              </div>
+            ),
+          )}
           <AddRow parentId={node.id} parentType="array" onAdd={(key, type) => onAdd(node.id, 'array', key, type)} />
         </div>
       ) : null}
@@ -1053,7 +1271,17 @@ function App() {
 
   useEffect(() => {
     saveToStorage(state)
-  }, [state.doc, state.rawText, state.expanded, state.selectedId, state.snippets, state.snippetContents, state.indent])
+  }, [
+    state.doc,
+    state.rawText,
+    state.expanded,
+    state.selectedId,
+    state.snippets,
+    state.snippetContents,
+    state.indent,
+    state.searchFilterOnly,
+    state.autoSaveEnabled,
+  ])
 
   useEffect(() => {
     if (!state.notice) return
@@ -1061,11 +1289,38 @@ function App() {
     return () => clearTimeout(timeout)
   }, [state.notice])
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const isMeta = event.metaKey || event.ctrlKey
+      if (isMeta && event.key.toLowerCase() === 'z') {
+        event.preventDefault()
+        dispatch({ type: event.shiftKey ? 'REDO' : 'UNDO' })
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [dispatch])
+
   const outputText = useMemo(() => {
     if (!state.doc) return ''
     const value = documentToJson(state.doc)
     return state.outputMode === 'pretty' ? formatJson(value, state.indent) : minifyJson(value)
   }, [state.doc, state.outputMode, state.indent])
+  const visibleSet = useMemo(() => {
+    if (!state.doc || !state.searchFilterOnly || !state.searchQuery.trim()) return undefined
+    const parents = buildParentMap(state.doc)
+    const visible = new Set<string>([state.doc.rootId])
+    state.searchMatches.forEach((id) => {
+      let current: string | undefined = id
+      while (current) {
+        visible.add(current)
+        current = parents[current]
+      }
+    })
+    return visible
+  }, [state.doc, state.searchFilterOnly, state.searchMatches, state.searchQuery])
+  const nodeCount = state.doc ? Object.keys(state.doc.nodes).length : 0
+  const largeJson = nodeCount > 800
 
   const importFile = async (file: File) => {
     const text = await file.text()
@@ -1145,7 +1400,11 @@ function App() {
         </div>
         <div className="control-group">
           <span className="control-label">Structure</span>
-          <button onClick={() => dispatch({ type: 'EXPAND_ALL' })} disabled={!state.doc}>
+          <button
+            onClick={() => dispatch({ type: 'EXPAND_ALL' })}
+            disabled={!state.doc || largeJson}
+            title={largeJson ? 'Disabled for large documents to avoid slowdowns.' : undefined}
+          >
             Expand all
           </button>
           <button onClick={() => dispatch({ type: 'COLLAPSE_ALL' })} disabled={!state.doc}>
@@ -1253,6 +1512,14 @@ function App() {
                   if (fileInputRef.current) fileInputRef.current.value = ''
                 }}
               />
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={state.autoSaveEnabled}
+                  onChange={(e) => dispatch({ type: 'SET_AUTOSAVE', enabled: e.target.checked })}
+                />
+                Autosave last document
+              </label>
               <button
                 onClick={() => {
                   dispatch({ type: 'SAVE_SNIPPET', name: 'Snippet' })
@@ -1291,6 +1558,15 @@ function App() {
               value={state.searchQuery}
               onChange={(e) => dispatch({ type: 'SET_SEARCH_QUERY', query: e.target.value })}
             />
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={state.searchFilterOnly}
+                disabled={!state.searchQuery.trim()}
+                onChange={(e) => dispatch({ type: 'TOGGLE_FILTER_MODE', enabled: e.target.checked })}
+              />
+              Filter matches only
+            </label>
             <div className="match-info">
               {state.searchMatches.length
                 ? `${state.activeMatch + 1} / ${state.searchMatches.length}`
@@ -1318,7 +1594,12 @@ function App() {
             <span className="legend-pill value">Value · text / number / boolean / null</span>
           </div>
         </div>
-        <div className="tree-container">
+        {largeJson ? (
+          <div className="banner warning">
+            Large JSON detected ({nodeCount} nodes). Expand-all is disabled; use search and filter mode to stay fast.
+          </div>
+        ) : null}
+        <div className="tree-container" role="tree" aria-label="JSON tree">
           {state.doc ? (
             <TreeNode
               doc={state.doc}
@@ -1328,6 +1609,7 @@ function App() {
               selectedId={state.selectedId}
               searchMatches={state.searchMatches}
               activeMatchId={activeMatchId}
+              visibleSet={visibleSet}
               onToggle={(id) => dispatch({ type: 'TOGGLE_EXPANDED', nodeId: id })}
               onSelect={(id) => dispatch({ type: 'SET_SELECTED', nodeId: id })}
               onRename={(parentId, childId, newKey) => dispatch({ type: 'RENAME_KEY', parentId, childId, newKey })}
@@ -1336,6 +1618,9 @@ function App() {
                 dispatch({ type: 'ADD_NODE', parentId, parentType, key, newType: type })
               }
               onDelete={(parentId, childId) => dispatch({ type: 'DELETE_NODE', parentId, childId })}
+              onMoveInArray={(parentId, childId, direction) =>
+                dispatch({ type: 'MOVE_ARRAY_ITEM', parentId, childId, direction })
+              }
             />
           ) : (
             <div className="placeholder">Parse JSON to start editing.</div>
@@ -1367,6 +1652,9 @@ function App() {
               </div>
               <div className="snippet-actions">
                 <button onClick={() => loadSnippet(snippet.id)}>Load</button>
+                <button onClick={() => dispatch({ type: 'OVERWRITE_SNIPPET', id: snippet.id })} disabled={!state.doc}>
+                  Overwrite
+                </button>
                 <button className="ghost danger" onClick={() => dispatch({ type: 'DELETE_SNIPPET', id: snippet.id })}>
                   Delete
                 </button>
