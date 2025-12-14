@@ -32,3 +32,7 @@
 - The app is client-only; avoid adding server calls unless explicitly required.
 - Do not commit secrets or `.env` values. Vite exposes `import.meta.env.VITE_*` to the client—treat anything added there as public.
 - Persist user data locally (per spec) and guard against invalid JSON states before rendering updates.
+
+## Current Implementation Status
+- Completed: raw JSON parse/format/minify with error banners; normalized document model; tree view with expand/collapse, inline key/primitive editing, add/delete nodes, key uniqueness + number validation; search with match navigation/ancestor expansion; undo/redo (50 depth); pretty/minified live output with copy/download; file import; key sorting; autosave last doc; local snippets stored in LocalStorage; clear-local-data control; styled three-pane layout.
+- Outstanding: array reordering; search filter-only mode; keyboard shortcuts + ARIA/keyboard tree navigation; virtualization or large-JSON warnings; IndexedDB storage for snippet content; performance/accessibility polish; automated tests (unit/ui); optional drag/drop and additional toolbar utilities per spec.
