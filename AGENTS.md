@@ -23,6 +23,14 @@
 - Two-space indentation; single quotes in TSX/TS files; keep imports ordered: external libs, aliases, relative paths.
 - ESLint defaults (JS + TypeScript + React Hooks + React Refresh) are the source of truth; resolve lint warnings before pushing.
 
+## React Architecture & File Structure
+- Group code by feature/concern: co-locate `components/`, `hooks/`, `context/`, `utils/`, and `types/` under the feature folder; keep shared primitives in `src/components` and `src/hooks`.
+- Keep components small and focused; lift shared state into a parent or a dedicated hook; use Context only for cross-cutting state (e.g., active document, theme), not to replace props.
+- Derive state instead of duplicating it; avoid storing computed values or props in local state; prefer immutable updates for JSON tree data to keep renders predictable.
+- Side effects belong in hooks (`useEffect`, `useMemo`, `useCallback`) with explicit dependency arrays; wrap expensive derived data in `useMemo` to protect render performance on large JSON payloads.
+- Prefer presentational/behavioral separation: pure display components receive typed props; business logic lives in hooks or controllers close to the feature.
+- Add new routes/entry points through `main.tsx`/`App.tsx`; keep Vite entry lean—initialize providers (theme, data persistence) there and delegate feature wiring to child components.
+
 ## Testing Guidelines
 - No automated tests yet. When adding, prefer Vitest + React Testing Library; co-locate as `*.test.tsx` beside components or `__tests__/` near logic.
 - Cover JSON parsing/validation, tree editing operations, and UI controls from the specification. Aim for deterministic tests (no network, no timers without fakes).
@@ -36,4 +44,3 @@
 - The app is client-only; avoid adding server calls unless explicitly required.
 - Do not commit secrets or `.env` values. Vite exposes `import.meta.env.VITE_*` to the client—treat anything added there as public.
 - Persist user data locally (per spec) and guard against invalid JSON states before rendering updates.
-
