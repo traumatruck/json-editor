@@ -970,6 +970,7 @@ function App() {
   const [state, dispatch] = useReducer(editorReducer, undefined, buildInitialState)
   const activeMatchId = state.searchMatches[state.activeMatch]
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const [ioTab, setIoTab] = useState<'input' | 'output'>('input')
 
   useEffect(() => {
     saveToStorage(state)
@@ -1029,18 +1030,42 @@ function App() {
 
   return (
     <div className="app-shell">
-      <header className="top-bar">
-        <div>
+      <header className="hero">
+        <div className="hero-text">
+          <p className="eyebrow">Workspace</p>
           <h1>JSON Visualizer</h1>
           <p className="muted">Parse, explore, and edit JSON safely with live output and snippets.</p>
+          <div className="pill-row">
+            <span className="pill">Client only</span>
+            <span className="pill">Undo / Redo ready</span>
+            <span className="pill">Snippets {state.snippets.length}</span>
+          </div>
         </div>
-        <div className="toolbar">
+        <div className="hero-side">
+          <div className="hero-note">Use the space below to shape JSON, keep it synced, and ship clean exports.</div>
+          <div className="hero-actions">
+            <button className="primary" onClick={() => dispatch({ type: 'PARSE_TEXT' })}>
+              Parse now
+            </button>
+            <button className="ghost" onClick={handleCopy} disabled={!outputText}>
+              Copy output
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="control-bar">
+        <div className="control-group">
+          <span className="control-label">History</span>
           <button onClick={() => dispatch({ type: 'UNDO' })} disabled={!state.undoStack.length}>
             Undo
           </button>
           <button onClick={() => dispatch({ type: 'REDO' })} disabled={!state.redoStack.length}>
             Redo
           </button>
+        </div>
+        <div className="control-group">
+          <span className="control-label">Structure</span>
           <button onClick={() => dispatch({ type: 'EXPAND_ALL' })} disabled={!state.doc}>
             Expand all
           </button>
@@ -1054,16 +1079,35 @@ function App() {
             Sort all keys
           </button>
         </div>
-      </header>
+      </div>
 
-      <div className="layout">
-        <section className="panel input-panel">
-          <div className="panel-header">
-            <div>
-              <h2>Raw JSON</h2>
-              <p className="muted">Paste JSON, import a file, or load a snippet.</p>
+      <section className="panel io-panel">
+        <div className="tab-header">
+          <div className="tabs">
+            <button className={ioTab === 'input' ? 'tab active' : 'tab'} onClick={() => setIoTab('input')}>
+              Raw input
+            </button>
+            <button className={ioTab === 'output' ? 'tab active' : 'tab'} onClick={() => setIoTab('output')}>
+              Live output
+            </button>
+          </div>
+          {ioTab === 'output' ? (
+            <div className="tab-actions">
+              <button onClick={() => dispatch({ type: 'SET_OUTPUT_MODE', mode: 'pretty' })} className={state.outputMode === 'pretty' ? 'primary' : ''}>
+                Pretty
+              </button>
+              <button onClick={() => dispatch({ type: 'SET_OUTPUT_MODE', mode: 'minified' })} className={state.outputMode === 'minified' ? 'primary' : ''}>
+                Minified
+              </button>
+              <button onClick={handleCopy} disabled={!outputText}>
+                Copy
+              </button>
+              <button onClick={handleDownload} disabled={!outputText}>
+                Download .json
+              </button>
             </div>
-            <div className="panel-actions">
+          ) : (
+            <div className="tab-actions">
               <label className="toggle">
                 <input
                   type="checkbox"
@@ -1074,171 +1118,170 @@ function App() {
               </label>
               <button onClick={() => dispatch({ type: 'PARSE_TEXT' })}>Parse</button>
             </div>
-          </div>
-          <textarea
-            className="raw-input"
-            value={state.rawText}
-            onChange={(e) => dispatch({ type: 'SET_RAW_TEXT', text: e.target.value })}
-            placeholder="Paste JSON here..."
-          />
-          {renderParseError()}
-          <div className="input-actions">
-            <button
-              onClick={() => {
-                dispatch({ type: 'SET_OUTPUT_MODE', mode: 'pretty' })
-                if (state.doc) dispatch({ type: 'LOAD_TEXT', text: formatJson(documentToJson(state.doc), state.indent) })
-              }}
-              disabled={!state.doc}
-            >
-              Format
-            </button>
-            <button
-              onClick={() => {
-                dispatch({ type: 'SET_OUTPUT_MODE', mode: 'minified' })
-                if (state.doc) dispatch({ type: 'LOAD_TEXT', text: minifyJson(documentToJson(state.doc)) })
-              }}
-              disabled={!state.doc}
-            >
-              Minify
-            </button>
-            <div className="indent-control">
-              <label>Indent</label>
-              <select value={state.indent} onChange={(e) => dispatch({ type: 'SET_INDENT', indent: Number(e.target.value) })}>
-                <option value={2}>2 spaces</option>
-                <option value={4}>4 spaces</option>
-              </select>
-            </div>
-          </div>
-          <div className="file-row">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".json,application/json,text/plain"
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) importFile(file)
-                if (fileInputRef.current) fileInputRef.current.value = ''
-              }}
-            />
-            <button
-              onClick={() => {
-                dispatch({ type: 'SAVE_SNIPPET', name: 'Snippet' })
-              }}
-              disabled={!state.doc}
-            >
-              Save snippet
-            </button>
-            <button className="ghost" onClick={() => dispatch({ type: 'CLEAR_LOCAL' })}>
-              Clear local data
-            </button>
-          </div>
-          <div className="snippet-list">
-            <div className="snippet-header">
-              <h3>Snippets</h3>
-              <p className="muted small">Stored locally</p>
-            </div>
-            {state.snippets.length === 0 ? (
-              <p className="muted">No snippets yet.</p>
-            ) : (
-              state.snippets.map((snippet) => (
-                <div key={snippet.id} className="snippet-row">
-                  <div>
-                    <input
-                      value={snippet.name}
-                      onChange={(e) => dispatch({ type: 'RENAME_SNIPPET', id: snippet.id, name: e.target.value })}
-                    />
-                    <div className="muted small">
-                      Updated {new Date(snippet.updatedAt).toLocaleString()}
-                    </div>
-                  </div>
-                  <div className="snippet-actions">
-                    <button onClick={() => loadSnippet(snippet.id)}>Load</button>
-                    <button className="ghost danger" onClick={() => dispatch({ type: 'DELETE_SNIPPET', id: snippet.id })}>
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
+          )}
+        </div>
 
-        <section className="panel tree-panel">
-          <div className="panel-header">
-            <div>
-              <h2>Tree view</h2>
-              <p className="muted">Inline edit, add, remove, and search the hierarchy.</p>
-            </div>
-            <div className="search-row">
-              <input
-                placeholder="Search keys or values"
-                value={state.searchQuery}
-                onChange={(e) => dispatch({ type: 'SET_SEARCH_QUERY', query: e.target.value })}
-              />
-              <div className="match-info">
-                {state.searchMatches.length
-                  ? `${state.activeMatch + 1} / ${state.searchMatches.length}`
-                  : '0 matches'}
+        {ioTab === 'input' ? (
+          <div className="io-body">
+            <div className="panel-header no-border">
+              <div>
+                <h2>Raw JSON</h2>
+                <p className="muted">Paste JSON, import a file, or load a snippet.</p>
               </div>
-              <button onClick={() => dispatch({ type: 'MOVE_MATCH', direction: -1 })} disabled={!state.searchMatches.length}>
-                Prev
-              </button>
-              <button onClick={() => dispatch({ type: 'MOVE_MATCH', direction: 1 })} disabled={!state.searchMatches.length}>
-                Next
-              </button>
+              <div className="input-actions">
+                <button
+                  onClick={() => {
+                    dispatch({ type: 'SET_OUTPUT_MODE', mode: 'pretty' })
+                    if (state.doc) dispatch({ type: 'LOAD_TEXT', text: formatJson(documentToJson(state.doc), state.indent) })
+                  }}
+                  disabled={!state.doc}
+                >
+                  Format
+                </button>
+                <button
+                  onClick={() => {
+                    dispatch({ type: 'SET_OUTPUT_MODE', mode: 'minified' })
+                    if (state.doc) dispatch({ type: 'LOAD_TEXT', text: minifyJson(documentToJson(state.doc)) })
+                  }}
+                  disabled={!state.doc}
+                >
+                  Minify
+                </button>
+                <div className="indent-control">
+                  <label>Indent</label>
+                  <select value={state.indent} onChange={(e) => dispatch({ type: 'SET_INDENT', indent: Number(e.target.value) })}>
+                    <option value={2}>2 spaces</option>
+                    <option value={4}>4 spaces</option>
+                  </select>
+                </div>
+              </div>
             </div>
-          </div>
-          <div className="tree-container">
-            {state.doc ? (
-              <TreeNode
-                doc={state.doc}
-                nodeId={state.doc.rootId}
-                label="root"
-                expanded={state.expanded}
-                selectedId={state.selectedId}
-                searchMatches={state.searchMatches}
-                activeMatchId={activeMatchId}
-                onToggle={(id) => dispatch({ type: 'TOGGLE_EXPANDED', nodeId: id })}
-                onSelect={(id) => dispatch({ type: 'SET_SELECTED', nodeId: id })}
-                onRename={(parentId, childId, newKey) => dispatch({ type: 'RENAME_KEY', parentId, childId, newKey })}
-                onEditPrimitive={(nodeId, value, newType) => dispatch({ type: 'EDIT_PRIMITIVE', nodeId, value, newType })}
-                onAdd={(parentId, parentType, key, type) =>
-                  dispatch({ type: 'ADD_NODE', parentId, parentType, key, newType: type })
-                }
-                onDelete={(parentId, childId) => dispatch({ type: 'DELETE_NODE', parentId, childId })}
+            <textarea
+              className="raw-input"
+              value={state.rawText}
+              onChange={(e) => dispatch({ type: 'SET_RAW_TEXT', text: e.target.value })}
+              placeholder="Paste JSON here..."
+            />
+            {renderParseError()}
+            <div className="file-row">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json,application/json,text/plain"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) importFile(file)
+                  if (fileInputRef.current) fileInputRef.current.value = ''
+                }}
               />
-            ) : (
-              <div className="placeholder">Parse JSON to start editing.</div>
-            )}
+              <button
+                onClick={() => {
+                  dispatch({ type: 'SAVE_SNIPPET', name: 'Snippet' })
+                }}
+                disabled={!state.doc}
+              >
+                Save snippet
+              </button>
+              <button className="ghost" onClick={() => dispatch({ type: 'CLEAR_LOCAL' })}>
+                Clear local data
+              </button>
+            </div>
           </div>
-        </section>
+        ) : (
+          <div className="io-body">
+            <div className="panel-header no-border">
+              <div>
+                <h2>Live output</h2>
+                <p className="muted">Pretty or minified JSON ready to copy or download.</p>
+              </div>
+            </div>
+            <textarea className="output-view" value={outputText} readOnly placeholder="Output JSON appears here." />
+          </div>
+        )}
+      </section>
 
-        <section className="panel output-panel">
-          <div className="panel-header">
-            <div>
-              <h2>Live output</h2>
-              <p className="muted">Pretty or minified JSON ready to copy or download.</p>
-            </div>
-            <div className="panel-actions">
-              <button onClick={() => dispatch({ type: 'SET_OUTPUT_MODE', mode: 'pretty' })} className={state.outputMode === 'pretty' ? 'primary' : ''}>
-                Pretty
-              </button>
-              <button onClick={() => dispatch({ type: 'SET_OUTPUT_MODE', mode: 'minified' })} className={state.outputMode === 'minified' ? 'primary' : ''}>
-                Minified
-              </button>
-            </div>
+      <section className="panel tree-panel">
+        <div className="panel-header">
+          <div>
+            <h2>Tree view</h2>
+            <p className="muted">Inline edit, add, remove, and search the hierarchy.</p>
           </div>
-          <div className="output-actions">
-            <button onClick={handleCopy} disabled={!outputText}>
-              Copy
+          <div className="search-row">
+            <input
+              placeholder="Search keys or values"
+              value={state.searchQuery}
+              onChange={(e) => dispatch({ type: 'SET_SEARCH_QUERY', query: e.target.value })}
+            />
+            <div className="match-info">
+              {state.searchMatches.length
+                ? `${state.activeMatch + 1} / ${state.searchMatches.length}`
+                : '0 matches'}
+            </div>
+            <button onClick={() => dispatch({ type: 'MOVE_MATCH', direction: -1 })} disabled={!state.searchMatches.length}>
+              Prev
             </button>
-            <button onClick={handleDownload} disabled={!outputText}>
-              Download .json
+            <button onClick={() => dispatch({ type: 'MOVE_MATCH', direction: 1 })} disabled={!state.searchMatches.length}>
+              Next
             </button>
           </div>
-          <textarea className="output-view" value={outputText} readOnly placeholder="Output JSON appears here." />
-        </section>
-      </div>
+        </div>
+        <div className="tree-container">
+          {state.doc ? (
+            <TreeNode
+              doc={state.doc}
+              nodeId={state.doc.rootId}
+              label="root"
+              expanded={state.expanded}
+              selectedId={state.selectedId}
+              searchMatches={state.searchMatches}
+              activeMatchId={activeMatchId}
+              onToggle={(id) => dispatch({ type: 'TOGGLE_EXPANDED', nodeId: id })}
+              onSelect={(id) => dispatch({ type: 'SET_SELECTED', nodeId: id })}
+              onRename={(parentId, childId, newKey) => dispatch({ type: 'RENAME_KEY', parentId, childId, newKey })}
+              onEditPrimitive={(nodeId, value, newType) => dispatch({ type: 'EDIT_PRIMITIVE', nodeId, value, newType })}
+              onAdd={(parentId, parentType, key, type) =>
+                dispatch({ type: 'ADD_NODE', parentId, parentType, key, newType: type })
+              }
+              onDelete={(parentId, childId) => dispatch({ type: 'DELETE_NODE', parentId, childId })}
+            />
+          ) : (
+            <div className="placeholder">Parse JSON to start editing.</div>
+          )}
+        </div>
+      </section>
+
+      <section className="panel snippet-panel full-width">
+        <div className="snippet-header">
+          <div>
+            <h3>Snippets</h3>
+            <p className="muted small">Stored locally</p>
+          </div>
+          <div className="pill subtle">{state.snippets.length ? `${state.snippets.length} saved` : 'None yet'}</div>
+        </div>
+        {state.snippets.length === 0 ? (
+          <p className="muted">No snippets yet.</p>
+        ) : (
+          state.snippets.map((snippet) => (
+            <div key={snippet.id} className="snippet-row">
+              <div>
+                <input
+                  value={snippet.name}
+                  onChange={(e) => dispatch({ type: 'RENAME_SNIPPET', id: snippet.id, name: e.target.value })}
+                />
+                <div className="muted small">
+                  Updated {new Date(snippet.updatedAt).toLocaleString()}
+                </div>
+              </div>
+              <div className="snippet-actions">
+                <button onClick={() => loadSnippet(snippet.id)}>Load</button>
+                <button className="ghost danger" onClick={() => dispatch({ type: 'DELETE_SNIPPET', id: snippet.id })}>
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </section>
 
       {state.notice ? <div className={`toast ${state.notice.type}`}>{state.notice.message}</div> : null}
     </div>

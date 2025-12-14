@@ -6,6 +6,10 @@
 - `docs/` includes product context (`SPECIFICATION.md`, `USER-STORIES.md`); keep feature work aligned with these.
 - Root configs: `vite.config.ts`, `tsconfig*.json`, and `eslint.config.js`. Avoid editing `node_modules/`; committed output goes to `dist/` after builds.
 
+## MCP Usage
+- Use `browser-mcp` to view and interact with the running app whenever UI context is needed.
+- If `browser-mcp` is unavailable, not running, or failing, stop before doing any work and notify the user.
+
 ## Setup, Build, and Local Development
 - `npm install` to fetch deps (Node 18+ recommended for Vite 7).
 - `npm run dev` launches Vite dev server with HMR.
