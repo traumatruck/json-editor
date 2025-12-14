@@ -19,6 +19,7 @@ function App() {
   const [state, dispatch] = useReducer(editorReducer, undefined, buildInitialState)
   const [ioTab, setIoTab] = useState<'input' | 'output'>('input')
   const activeMatchId = state.searchMatches[state.activeMatch]
+  const anchorRootId = state.doc ? state.anchorPath[state.anchorPath.length - 1] ?? state.doc.rootId : undefined
 
   useEffect(() => {
     saveToStorage(state)
@@ -32,6 +33,7 @@ function App() {
     state.indent,
     state.searchFilterOnly,
     state.autoSaveEnabled,
+    state.anchorPath,
   ])
 
   useEffect(() => {
@@ -58,10 +60,33 @@ function App() {
     return state.outputMode === 'pretty' ? formatJson(value, state.indent) : minifyJson(value)
   }, [state.doc, state.outputMode, state.indent])
 
+  const anchorCrumbs = useMemo(() => {
+    if (!state.doc || !state.anchorPath.length) return []
+    const crumbs = [{ id: state.doc.rootId, label: 'root' }]
+    for (let i = 1; i < state.anchorPath.length; i += 1) {
+      const parentId = state.anchorPath[i - 1]
+      const childId = state.anchorPath[i]
+      const parent = state.doc.nodes[parentId]
+      if (!parent) break
+      let label = childId
+      if (parent.type === 'object') {
+        const entry = parent.entries.find((item) => item.childId === childId)
+        label = entry ? entry.key : label
+      } else if (parent.type === 'array') {
+        const index = parent.items.indexOf(childId)
+        label = index >= 0 ? `[${index}]` : label
+      }
+      crumbs.push({ id: childId, label })
+    }
+    return crumbs
+  }, [state.doc, state.anchorPath])
+
   const visibleSet = useMemo(() => {
     if (!state.doc || !state.searchFilterOnly || !state.searchQuery.trim()) return undefined
     const parents = buildParentMap(state.doc)
-    const visible = new Set<string>([state.doc.rootId])
+    const rootId = anchorRootId ?? state.doc.rootId
+    const visible = new Set<string>([rootId])
+    state.anchorPath.forEach((id) => visible.add(id))
     state.searchMatches.forEach((id) => {
       let current: string | undefined = id
       while (current) {
@@ -171,6 +196,8 @@ function App() {
         visibleSet={visibleSet}
         largeJson={largeJson}
         nodeCount={nodeCount}
+        anchorCrumbs={anchorCrumbs}
+        anchorRootId={anchorRootId}
         onToggleNode={(id) => dispatch({ type: 'TOGGLE_EXPANDED', nodeId: id })}
         onSelectNode={(id) => dispatch({ type: 'SET_SELECTED', nodeId: id })}
         onRename={(parentId, childId, newKey) => dispatch({ type: 'RENAME_KEY', parentId, childId, newKey })}
@@ -185,6 +212,7 @@ function App() {
         onSearchChange={(query) => dispatch({ type: 'SET_SEARCH_QUERY', query })}
         onToggleFilterMode={(enabled) => dispatch({ type: 'TOGGLE_FILTER_MODE', enabled })}
         onMoveMatch={(direction) => dispatch({ type: 'MOVE_MATCH', direction })}
+        onAnchor={(nodeId) => dispatch({ type: 'ANCHOR_TO', nodeId })}
       />
 
       <SnippetsPanel

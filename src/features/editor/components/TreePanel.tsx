@@ -5,6 +5,8 @@ type TreePanelProps = {
   doc: DocumentState | null
   expanded: Set<string>
   selectedId?: string
+  anchorCrumbs: { id: string; label: string }[]
+  anchorRootId?: string
   searchQuery: string
   searchFilterOnly: boolean
   searchMatches: string[]
@@ -23,12 +25,15 @@ type TreePanelProps = {
   onSearchChange: (query: string) => void
   onToggleFilterMode: (enabled: boolean) => void
   onMoveMatch: (direction: 1 | -1) => void
+  onAnchor: (nodeId?: string) => void
 }
 
 export function TreePanel({
   doc,
   expanded,
   selectedId,
+  anchorCrumbs,
+  anchorRootId,
   searchQuery,
   searchFilterOnly,
   searchMatches,
@@ -47,7 +52,11 @@ export function TreePanel({
   onSearchChange,
   onToggleFilterMode,
   onMoveMatch,
+  onAnchor,
 }: TreePanelProps) {
+  const anchorLabel = anchorCrumbs[anchorCrumbs.length - 1]?.label ?? 'root'
+  const canAnchorSelection =
+    !!selectedId && !!anchorRootId && selectedId !== anchorRootId && (doc ? !!doc.nodes[selectedId] : false)
   return (
     <section className="panel tree-panel">
       <div className="panel-header">
@@ -81,6 +90,32 @@ export function TreePanel({
           </button>
         </div>
       </div>
+      <div className="anchor-bar">
+        <div className="breadcrumb">
+          {anchorCrumbs.length ? (
+            anchorCrumbs.map((crumb, index) => (
+              <button
+                key={crumb.id}
+                className={`crumb ${index === anchorCrumbs.length - 1 ? 'current' : ''}`}
+                onClick={() => onAnchor(crumb.id)}
+                disabled={index === anchorCrumbs.length - 1}
+              >
+                {crumb.label}
+              </button>
+            ))
+          ) : (
+            <span className="muted small">No document loaded.</span>
+          )}
+        </div>
+        <div className="anchor-actions">
+          <button className="ghost" onClick={() => onAnchor(selectedId)} disabled={!canAnchorSelection}>
+            Anchor selection
+          </button>
+          <button className="ghost" onClick={() => onAnchor()} disabled={anchorCrumbs.length <= 1}>
+            Reset to root
+          </button>
+        </div>
+      </div>
       <div className="tree-guide">
         <div>
           <div className="helper-label">How to explore</div>
@@ -104,8 +139,8 @@ export function TreePanel({
         {doc ? (
           <TreeNode
             doc={doc}
-            nodeId={doc.rootId}
-            label="root"
+            nodeId={anchorRootId ?? doc.rootId}
+            label={anchorLabel}
             expanded={expanded}
             selectedId={selectedId}
             searchMatches={searchMatches}

@@ -26,6 +26,7 @@ export type HistoryEntry = {
   expanded: string[]
   selectedId?: string
   preSearchExpanded?: string[]
+  anchorPath: string[]
 }
 
 export type EditorState = {
@@ -49,6 +50,7 @@ export type EditorState = {
   snippetContents: Record<string, string>
   notice?: Notice
   preSearchExpanded?: Set<string>
+  anchorPath: string[]
 }
 
 export type Action =
@@ -81,6 +83,7 @@ export type Action =
   | { type: 'OVERWRITE_SNIPPET'; id: string }
   | { type: 'CLEAR_LOCAL' }
   | { type: 'SET_NOTICE'; notice?: Notice }
+  | { type: 'ANCHOR_TO'; nodeId?: string }
 
 const DEFAULT_JSON = {
   profile: {
@@ -209,6 +212,7 @@ function snapshotState(state: EditorState): HistoryEntry {
     expanded: Array.from(state.expanded),
     selectedId: state.selectedId,
     preSearchExpanded: state.preSearchExpanded ? Array.from(state.preSearchExpanded) : undefined,
+    anchorPath: state.anchorPath,
   }
 }
 
@@ -238,7 +242,39 @@ function expandAncestors(targetId: string, parents: Record<string, string | unde
   }
 }
 
-function findSearchMatches(doc: DocumentState, query: string): string[] {
+function collectSubtreeIds(doc: DocumentState, rootId: string, bucket = new Set<string>()) {
+  const node = doc.nodes[rootId]
+  if (!node) return bucket
+  bucket.add(rootId)
+  if (node.type === 'object') {
+    node.entries.forEach((entry) => collectSubtreeIds(doc, entry.childId, bucket))
+  } else if (node.type === 'array') {
+    node.items.forEach((childId) => collectSubtreeIds(doc, childId, bucket))
+  }
+  return bucket
+}
+
+function buildAnchorPath(doc: DocumentState, targetId: string): string[] {
+  const parents = buildParentMap(doc)
+  const path: string[] = []
+  let current: string | undefined = targetId
+  while (current) {
+    path.push(current)
+    current = parents[current]
+  }
+  const result = path.reverse()
+  if (!result.length || result[0] !== doc.rootId) return []
+  return result
+}
+
+function resolveAnchorPath(doc: DocumentState, anchorPath: string[]): string[] {
+  const targetId = anchorPath[anchorPath.length - 1]
+  if (!targetId) return [doc.rootId]
+  const path = buildAnchorPath(doc, targetId)
+  return path.length ? path : [doc.rootId]
+}
+
+function findSearchMatches(doc: DocumentState, query: string, rootId: string): string[] {
   const matches: string[] = []
   const lower = query.toLowerCase()
   const visit = (nodeId: string) => {
@@ -262,16 +298,19 @@ function findSearchMatches(doc: DocumentState, query: string): string[] {
       matches.push(node.id)
     }
   }
-  visit(doc.rootId)
+  visit(rootId)
   return matches
 }
 
-function applySearch(state: EditorState, docOverride?: DocumentState | null): EditorState {
+function applySearch(state: EditorState, docOverride?: DocumentState | null, anchorOverride?: string[]): EditorState {
   const doc = docOverride ?? state.doc
   if (!doc || !state.searchQuery.trim()) {
-    return { ...state, searchMatches: [], activeMatch: -1 }
+    const nextAnchor = anchorOverride ?? state.anchorPath
+    return { ...state, searchMatches: [], activeMatch: -1, anchorPath: nextAnchor }
   }
-  const matches = findSearchMatches(doc, state.searchQuery.trim())
+  const anchorPath = anchorOverride ?? state.anchorPath
+  const anchorRoot = anchorPath[anchorPath.length - 1] ?? doc.rootId
+  const matches = findSearchMatches(doc, state.searchQuery.trim(), anchorRoot)
   const currentActiveId = state.searchMatches[state.activeMatch]
   const nextActiveIndex = currentActiveId ? matches.indexOf(currentActiveId) : -1
   const activeMatch = nextActiveIndex >= 0 ? nextActiveIndex : matches.length ? 0 : -1
@@ -280,7 +319,8 @@ function applySearch(state: EditorState, docOverride?: DocumentState | null): Ed
   if (matches[activeMatch]) {
     expandAncestors(matches[activeMatch], parents, expanded)
   }
-  return { ...state, searchMatches: matches, activeMatch, expanded }
+  anchorPath.forEach((id) => expanded.add(id))
+  return { ...state, searchMatches: matches, activeMatch, expanded, anchorPath }
 }
 
 function addNodeToDocument(
@@ -436,6 +476,7 @@ function editPrimitive(
 
 function finalizeDocumentChange(state: EditorState, doc: DocumentState, focusId?: string): EditorState {
   const formatted = formatJson(documentToJson(doc), state.indent)
+  const nextAnchorPath = resolveAnchorPath(doc, state.anchorPath)
   const base = applySearch(
     {
       ...state,
@@ -445,8 +486,10 @@ function finalizeDocumentChange(state: EditorState, doc: DocumentState, focusId?
       parseError: undefined,
       selectedId: focusId ?? state.selectedId,
       preSearchExpanded: state.preSearchExpanded,
+      anchorPath: nextAnchorPath,
     },
     doc,
+    nextAnchorPath,
   )
   return withHistory(state, base, true)
 }
@@ -489,9 +532,10 @@ function applyParse(state: EditorState, text: string): EditorState {
     lastValidText: formatted,
     expanded,
     selectedId: doc.rootId,
+    anchorPath: [doc.rootId],
     preSearchExpanded: state.searchQuery.trim() ? new Set([doc.rootId]) : undefined,
   }
-  const withSearch = applySearch(base, doc)
+  const withSearch = applySearch(base, doc, [doc.rootId])
   return withHistory(state, withSearch, true)
 }
 
@@ -519,6 +563,7 @@ function loadStoredState(autoSaveEnabled: boolean): EditorState | null {
         doc,
         expanded: new Set([doc.rootId]),
         selectedId: doc.rootId,
+        anchorPath: [doc.rootId],
         parseError: undefined,
         searchQuery: '',
         searchMatches: [],
@@ -541,12 +586,14 @@ function loadStoredState(autoSaveEnabled: boolean): EditorState | null {
     const expandedSet: Set<string> = new Set(parsed.expanded ?? [])
     const indent = parsed.indent ?? 2
     const searchFilterOnly = parsed.searchFilterOnly ?? false
+    const anchorPath: string[] = parsed.anchorPath && parsed.anchorPath.length ? parsed.anchorPath : doc ? [doc.rootId] : []
     const restored: EditorState = {
       rawText: parsed.rawText ?? SAMPLE_TEXT,
       lastValidText: parsed.lastValidText ?? SAMPLE_TEXT,
       doc,
       expanded: expandedSet,
       selectedId: parsed.selectedId,
+      anchorPath,
       parseError: undefined,
       searchQuery: '',
       searchMatches: [],
@@ -574,7 +621,7 @@ export function buildInitialState(): EditorState {
   const autoSaveEnabled = loadAutoSaveEnabled()
   const restored = loadStoredState(autoSaveEnabled)
   if (restored) {
-    return applySearch(restored, restored.doc)
+    return applySearch(restored, restored.doc, restored.anchorPath)
   }
   const doc = buildDocumentFromValue(DEFAULT_JSON)
   return {
@@ -584,6 +631,7 @@ export function buildInitialState(): EditorState {
     parseError: undefined,
     expanded: new Set([doc.rootId]),
     selectedId: doc.rootId,
+    anchorPath: [doc.rootId],
     searchQuery: '',
     searchMatches: [],
     activeMatch: -1,
@@ -613,6 +661,7 @@ export function saveToStorage(state: EditorState) {
         selectedId: state.selectedId,
         indent: state.indent,
         searchFilterOnly: state.searchFilterOnly,
+        anchorPath: state.anchorPath,
       }
       localStorage.setItem(LAST_DOC_KEY, JSON.stringify(payload))
     } else {
@@ -661,11 +710,15 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
     }
     case 'EXPAND_ALL': {
       if (!state.doc) return state
-      const expanded = new Set(Object.keys(state.doc.nodes))
+      const anchorRoot = state.anchorPath[state.anchorPath.length - 1] ?? state.doc.rootId
+      const expanded = collectSubtreeIds(state.doc, anchorRoot)
+      state.anchorPath.forEach((id) => expanded.add(id))
       return { ...state, expanded }
     }
     case 'COLLAPSE_ALL':
-      return state.doc ? { ...state, expanded: new Set([state.doc.rootId]) } : state
+      return state.doc
+        ? { ...state, expanded: new Set(state.anchorPath.length ? state.anchorPath : [state.doc.rootId]) }
+        : state
     case 'SET_SEARCH_QUERY': {
       const trimmed = action.query
       const enteringSearch = !state.searchQuery.trim() && !!trimmed.trim()
@@ -695,6 +748,7 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         const parents = buildParentMap(state.doc)
         expandAncestors(state.searchMatches[nextIndex], parents, expanded)
       }
+      state.anchorPath.forEach((id) => expanded.add(id))
       return { ...state, activeMatch: nextIndex, expanded, selectedId: state.searchMatches[nextIndex] }
     }
     case 'SET_OUTPUT_MODE':
@@ -719,12 +773,13 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         rawText: previous.rawText,
         expanded: new Set(previous.expanded),
         selectedId: previous.selectedId,
+        anchorPath: previous.anchorPath,
         undoStack: remaining,
         redoStack: [redo, ...state.redoStack].slice(0, 50),
         parseError: undefined,
         preSearchExpanded: previous.preSearchExpanded ? new Set(previous.preSearchExpanded) : undefined,
       }
-      return applySearch(restored, restored.doc)
+      return applySearch(restored, restored.doc, restored.anchorPath)
     }
     case 'REDO': {
       const nextEntry = state.redoStack[0]
@@ -737,12 +792,13 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
         rawText: nextEntry.rawText,
         expanded: new Set(nextEntry.expanded),
         selectedId: nextEntry.selectedId,
+        anchorPath: nextEntry.anchorPath,
         redoStack: remaining,
         undoStack: [undo, ...state.undoStack].slice(0, 50),
         parseError: undefined,
         preSearchExpanded: nextEntry.preSearchExpanded ? new Set(nextEntry.preSearchExpanded) : undefined,
       }
-      return applySearch(restored, restored.doc)
+      return applySearch(restored, restored.doc, restored.anchorPath)
     }
     case 'SET_AUTOPARSE':
       return { ...state, autoParse: action.enabled }
@@ -802,6 +858,18 @@ export function editorReducer(state: EditorState, action: Action): EditorState {
     }
     case 'SET_NOTICE':
       return { ...state, notice: action.notice }
+    case 'ANCHOR_TO': {
+      if (!state.doc) return state
+      const targetId = action.nodeId ?? state.doc.rootId
+      const path = buildAnchorPath(state.doc, targetId)
+      if (!path.length) return state
+      const expanded = new Set(state.expanded)
+      path.forEach((id) => expanded.add(id))
+      const subtree = collectSubtreeIds(state.doc, path[path.length - 1])
+      const selectedId = subtree.has(state.selectedId ?? '') ? state.selectedId : path[path.length - 1]
+      const next = { ...state, anchorPath: path, expanded, selectedId }
+      return applySearch(next, state.doc, path)
+    }
     default:
       return state
   }
